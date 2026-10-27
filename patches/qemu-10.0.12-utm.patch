@@ -5148,3 +5148,715 @@ index 4f1e8b7f6c..aac4b26424 100644
 -- 
 2.54.0 (Apple Git-157)
 
+From d8f5938b9f533a8cb2de96267595e0de98664a5b Mon Sep 17 00:00:00 2001
+From: "Vinicius H. Pereira" <vinicius@Viniciuss-MacBook-Pro.local>
+Date: Mon, 26 Oct 2026 21:47:12 -0300
+Subject: [PATCH 1/2] hw/arm/virt: add a host battery and AC adapter device
+
+Guests on the virt machine have no battery, so a MacBook user cannot see
+the host's charge or charging state from inside the VM. Add an optional
+utm-battery device that the host updates through QOM properties
+(ac-online, charging, percent, minutes-remaining). Guests read it through
+a 16-byte MMIO block at 0x090c0000 from ACPI BAT0 (PNP0C0A, _STA, _BIF,
+_BIX, _BST) and ADP0 (ACPI0003, _PSR), so Windows and Linux show their
+native battery UI with no guest software.
+
+State changes raise a new GED battery event that notifies BAT0 and ADP0.
+The AML for that event is only emitted when the device exists, so VMs
+without it keep the same ACPI tables.
+
+ACPI has no time field, so the device reports the discharge/charge rate
+that makes the guest's capacity/rate estimate equal minutes-remaining.
+
+This is fork-only. The power profile (Low Power Mode) is not covered.
+
+Tested (standalone QEMU from this tree, HVF, disposable VMs, state pushed
+with qom-set over the monitor):
+- Ubuntu 26.04 ARM64 live ISO: `upower -d` showed 89% discharging, 8.2 h
+  to empty for percent=89 minutes-remaining=493, then charging with 45
+  minutes to full after ac-online=true charging=true
+  minutes-remaining=45. The guest updated with no action inside it.
+- Windows 11 ARM64 (clone of a UTM-installed disk, no TPM):
+  Get-CimInstance Win32_Battery showed EstimatedChargeRemaining 89,
+  BatteryStatus 1, EstimatedRunTime 493, then 60 and BatteryStatus 6
+  (charging) after the push.
+- Windows 11 ARM64 clone booted without the device: reaches the desktop
+  with no battery in the tray.
+- scripts/checkpatch.pl: 0 errors, 1 warning (MAINTAINERS notice).
+Not tested: the Windows Settings power page and time to full (Settings
+would not open in the cloned install), Linux without the device, and
+guest suspend/resume or migration.
+
+Assisted-by: Claude:claude-sonnet-5-5
+---
+ hw/acpi/generic_event_device.c         |  16 ++
+ hw/arm/meson.build                     |   2 +-
+ hw/arm/utm-battery.c                   | 355 +++++++++++++++++++++++++
+ hw/arm/virt-acpi-build.c               |   4 +
+ hw/arm/virt.c                          |   2 +-
+ include/hw/acpi/acpi_dev_interface.h   |   1 +
+ include/hw/acpi/generic_event_device.h |   1 +
+ include/hw/arm/utm-battery.h           |  18 ++
+ 8 files changed, 397 insertions(+), 2 deletions(-)
+ create mode 100644 hw/arm/utm-battery.c
+ create mode 100644 include/hw/arm/utm-battery.h
+
+diff --git a/hw/acpi/generic_event_device.c b/hw/acpi/generic_event_device.c
+index c85d97ca37..8bfc1fd1d6 100644
+--- a/hw/acpi/generic_event_device.c
++++ b/hw/acpi/generic_event_device.c
+@@ -26,6 +26,7 @@ static const uint32_t ged_supported_events[] = {
+     ACPI_GED_PWR_DOWN_EVT,
+     ACPI_GED_NVDIMM_HOTPLUG_EVT,
+     ACPI_GED_CPU_HOTPLUG_EVT,
++    ACPI_GED_BATTERY_EVT,
+ };
+ 
+ /*
+@@ -101,6 +102,13 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
+                 continue;
+             }
+ 
++            /* Without a battery there is no BAT0/ADP0 to notify */
++            if (event == ACPI_GED_BATTERY_EVT &&
++                !object_resolve_path_type("", "utm-battery", NULL)) {
++                ged_events--;
++                continue;
++            }
++
+             if_ctx = aml_if(aml_equal(aml_and(evt_sel, aml_int(event), NULL),
+                                       aml_int(event)));
+             switch (event) {
+@@ -121,6 +129,12 @@ void build_ged_aml(Aml *table, const char *name, HotplugHandler *hotplug_dev,
+                            aml_notify(aml_name("\\_SB.NVDR"),
+                                       aml_int(0x80)));
+                 break;
++            case ACPI_GED_BATTERY_EVT:
++                aml_append(if_ctx, aml_notify(aml_name("\\_SB.BAT0"),
++                                              aml_int(0x80)));
++                aml_append(if_ctx, aml_notify(aml_name("\\_SB.ADP0"),
++                                              aml_int(0x80)));
++                break;
+             default:
+                 /*
+                  * Please make sure all the events in ged_supported_events[]
+@@ -299,6 +313,8 @@ static void acpi_ged_send_event(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
+         sel = ACPI_GED_NVDIMM_HOTPLUG_EVT;
+     } else if (ev & ACPI_CPU_HOTPLUG_STATUS) {
+         sel = ACPI_GED_CPU_HOTPLUG_EVT;
++    } else if (ev & ACPI_BATTERY_STATUS) {
++        sel = ACPI_GED_BATTERY_EVT;
+     } else {
+         /* Unknown event. Return without generating interrupt. */
+         warn_report("GED: Unsupported event %d. No irq injected", ev);
+diff --git a/hw/arm/meson.build b/hw/arm/meson.build
+index ac473ce7cd..a1ca049603 100644
+--- a/hw/arm/meson.build
++++ b/hw/arm/meson.build
+@@ -1,6 +1,6 @@
+ arm_ss = ss.source_set()
+ arm_ss.add(files('boot.c'))
+-arm_ss.add(when: 'CONFIG_ARM_VIRT', if_true: files('virt.c'))
++arm_ss.add(when: 'CONFIG_ARM_VIRT', if_true: files('virt.c', 'utm-battery.c'))
+ arm_ss.add(when: 'CONFIG_ACPI', if_true: files('virt-acpi-build.c'))
+ arm_ss.add(when: 'CONFIG_DIGIC', if_true: files('digic_boards.c'))
+ arm_ss.add(when: 'CONFIG_EMCRAFT_SF2', if_true: files('msf2-som.c'))
+diff --git a/hw/arm/utm-battery.c b/hw/arm/utm-battery.c
+new file mode 100644
+index 0000000000..a9c8b5cd14
+--- /dev/null
++++ b/hw/arm/utm-battery.c
+@@ -0,0 +1,355 @@
++/*
++ * Host battery and AC adapter exposed to the guest as ACPI devices.
++ *
++ * The host pushes state through QOM properties. The guest reads it through a
++ * small MMIO register block from the AML methods built below.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "qapi/error.h"
++#include "qapi/visitor.h"
++#include "qemu/module.h"
++#include "exec/address-spaces.h"
++#include "exec/memory.h"
++#include "hw/acpi/acpi_dev_interface.h"
++#include "hw/acpi/aml-build.h"
++#include "hw/arm/utm-battery.h"
++#include "hw/qdev-core.h"
++#include "migration/vmstate.h"
++#include "qom/object.h"
++
++#define REG_AC_ONLINE   0x00
++#define REG_CHARGING    0x04
++#define REG_PERCENT     0x08
++#define REG_RATE        0x0c
++#define REG_LEN         0x10
++
++/* One percent is 1024 mWh so the AML can scale with a shift. */
++#define DESIGN_CAPACITY_MWH 102400
++#define DESIGN_VOLTAGE_MV   12000
++/* Rate reported when the host gives no time estimate. */
++#define DEFAULT_RATE_MW     5000
++
++OBJECT_DECLARE_SIMPLE_TYPE(UtmBatteryState, UTM_BATTERY)
++
++struct UtmBatteryState {
++    DeviceState parent_obj;
++
++    MemoryRegion iomem;
++    bool ac_online;
++    bool charging;
++    uint32_t percent;
++    uint32_t minutes_remaining;
++};
++
++/*
++ * Guests derive the time estimate from capacity / rate, so report the rate
++ * that makes their estimate equal the host's.
++ */
++static uint32_t utm_battery_rate(UtmBatteryState *s)
++{
++    uint64_t energy_mwh;
++
++    if (!s->minutes_remaining) {
++        return DEFAULT_RATE_MW;
++    }
++    if (s->charging) {
++        energy_mwh = (100 - s->percent) * (DESIGN_CAPACITY_MWH / 100);
++    } else {
++        energy_mwh = s->percent * (DESIGN_CAPACITY_MWH / 100);
++    }
++    return MAX(energy_mwh * 60 / s->minutes_remaining, 1);
++}
++
++static uint64_t utm_battery_read(void *opaque, hwaddr addr, unsigned size)
++{
++    UtmBatteryState *s = opaque;
++
++    switch (addr) {
++    case REG_AC_ONLINE:
++        return s->ac_online;
++    case REG_CHARGING:
++        return s->charging;
++    case REG_PERCENT:
++        return s->percent;
++    case REG_RATE:
++        return utm_battery_rate(s);
++    default:
++        return 0;
++    }
++}
++
++static void utm_battery_write(void *opaque, hwaddr addr, uint64_t val,
++                              unsigned size)
++{
++}
++
++static const MemoryRegionOps utm_battery_ops = {
++    .read = utm_battery_read,
++    .write = utm_battery_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++    },
++};
++
++static void utm_battery_notify(void)
++{
++    Object *ged = object_resolve_path_type("", TYPE_ACPI_DEVICE_IF, NULL);
++
++    if (ged) {
++        acpi_send_event(DEVICE(ged), ACPI_BATTERY_STATUS);
++    }
++}
++
++static bool get_ac_online(Object *obj, Error **errp)
++{
++    return UTM_BATTERY(obj)->ac_online;
++}
++
++static void set_ac_online(Object *obj, bool value, Error **errp)
++{
++    UtmBatteryState *s = UTM_BATTERY(obj);
++
++    if (s->ac_online != value) {
++        s->ac_online = value;
++        utm_battery_notify();
++    }
++}
++
++static bool get_charging(Object *obj, Error **errp)
++{
++    return UTM_BATTERY(obj)->charging;
++}
++
++static void set_charging(Object *obj, bool value, Error **errp)
++{
++    UtmBatteryState *s = UTM_BATTERY(obj);
++
++    if (s->charging != value) {
++        s->charging = value;
++        utm_battery_notify();
++    }
++}
++
++static void get_percent(Object *obj, Visitor *v, const char *name,
++                        void *opaque, Error **errp)
++{
++    uint32_t value = UTM_BATTERY(obj)->percent;
++
++    visit_type_uint32(v, name, &value, errp);
++}
++
++static void set_percent(Object *obj, Visitor *v, const char *name,
++                        void *opaque, Error **errp)
++{
++    UtmBatteryState *s = UTM_BATTERY(obj);
++    uint32_t value;
++
++    if (!visit_type_uint32(v, name, &value, errp)) {
++        return;
++    }
++    if (value > 100) {
++        error_setg(errp, "percent must be between 0 and 100");
++        return;
++    }
++    if (s->percent != value) {
++        s->percent = value;
++        utm_battery_notify();
++    }
++}
++
++static void get_minutes_remaining(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    uint32_t value = UTM_BATTERY(obj)->minutes_remaining;
++
++    visit_type_uint32(v, name, &value, errp);
++}
++
++static void set_minutes_remaining(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    UtmBatteryState *s = UTM_BATTERY(obj);
++    uint32_t value;
++
++    if (!visit_type_uint32(v, name, &value, errp)) {
++        return;
++    }
++    if (s->minutes_remaining != value) {
++        s->minutes_remaining = value;
++        utm_battery_notify();
++    }
++}
++
++static void utm_battery_init(Object *obj)
++{
++    UtmBatteryState *s = UTM_BATTERY(obj);
++
++    s->ac_online = true;
++    s->percent = 100;
++    object_property_add_bool(obj, "ac-online", get_ac_online, set_ac_online);
++    object_property_add_bool(obj, "charging", get_charging, set_charging);
++    object_property_add(obj, "percent", "uint32", get_percent, set_percent,
++                        NULL, NULL);
++    object_property_add(obj, "minutes-remaining", "uint32",
++                        get_minutes_remaining, set_minutes_remaining,
++                        NULL, NULL);
++}
++
++static void utm_battery_realize(DeviceState *dev, Error **errp)
++{
++    UtmBatteryState *s = UTM_BATTERY(dev);
++
++    memory_region_init_io(&s->iomem, OBJECT(s), &utm_battery_ops, s,
++                          TYPE_UTM_BATTERY, REG_LEN);
++    memory_region_add_subregion(get_system_memory(), UTM_BATTERY_MMIO_BASE,
++                                &s->iomem);
++}
++
++static const VMStateDescription vmstate_utm_battery = {
++    .name = TYPE_UTM_BATTERY,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_BOOL(ac_online, UtmBatteryState),
++        VMSTATE_BOOL(charging, UtmBatteryState),
++        VMSTATE_UINT32(percent, UtmBatteryState),
++        VMSTATE_UINT32(minutes_remaining, UtmBatteryState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void utm_battery_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->realize = utm_battery_realize;
++    dc->vmsd = &vmstate_utm_battery;
++    dc->user_creatable = true;
++    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
++}
++
++static const TypeInfo utm_battery_info = {
++    .name          = TYPE_UTM_BATTERY,
++    .parent        = TYPE_DEVICE,
++    .instance_size = sizeof(UtmBatteryState),
++    .instance_init = utm_battery_init,
++    .class_init    = utm_battery_class_init,
++};
++
++static void utm_battery_register_types(void)
++{
++    type_register_static(&utm_battery_info);
++}
++
++type_init(utm_battery_register_types)
++
++static void add_status_method(Aml *dev)
++{
++    Aml *method = aml_method("_BST", 0, AML_NOTSERIALIZED);
++    Aml *pkg = aml_local(0);
++    Aml *state = aml_local(1);
++    Aml *if_charging, *if_discharging;
++
++    aml_append(method, aml_store(aml_package(4), pkg));
++
++    /* 0 full or idle on AC, 1 discharging, 2 charging */
++    aml_append(method, aml_store(aml_int(0), state));
++    if_charging = aml_if(aml_equal(aml_name("BCHG"), aml_int(1)));
++    aml_append(if_charging, aml_store(aml_int(2), state));
++    aml_append(method, if_charging);
++    if_discharging = aml_if(aml_and(aml_equal(aml_name("BCHG"), aml_int(0)),
++                                    aml_equal(aml_name("PWRA"), aml_int(0)),
++                                    NULL));
++    aml_append(if_discharging, aml_store(aml_int(1), state));
++    aml_append(method, if_discharging);
++
++    aml_append(method, aml_store(state, aml_index(pkg, aml_int(0))));
++    aml_append(method, aml_store(aml_name("BRAT"), aml_index(pkg, aml_int(1))));
++    aml_append(method,
++               aml_store(aml_shiftleft(aml_name("BPCT"), aml_int(10)),
++                         aml_index(pkg, aml_int(2))));
++    aml_append(method, aml_store(aml_int(DESIGN_VOLTAGE_MV),
++                                 aml_index(pkg, aml_int(3))));
++    aml_append(method, aml_return(pkg));
++    aml_append(dev, method);
++}
++
++/* _BIF (ACPI 1.0 layout) and _BIX (extended layout) share their values. */
++static void add_info_method(Aml *dev, const char *name, bool extended)
++{
++    Aml *method = aml_method(name, 0, AML_NOTSERIALIZED);
++    Aml *pkg = aml_package(extended ? 21 : 13);
++
++    if (extended) {
++        aml_append(pkg, aml_int(1));    /* revision */
++    }
++    aml_append(pkg, aml_int(0));        /* power unit: mWh */
++    aml_append(pkg, aml_int(DESIGN_CAPACITY_MWH));
++    aml_append(pkg, aml_int(DESIGN_CAPACITY_MWH));
++    aml_append(pkg, aml_int(1));        /* rechargeable */
++    aml_append(pkg, aml_int(DESIGN_VOLTAGE_MV));
++    aml_append(pkg, aml_int(DESIGN_CAPACITY_MWH / 10));
++    aml_append(pkg, aml_int(DESIGN_CAPACITY_MWH / 20));
++    if (extended) {
++        aml_append(pkg, aml_int(0));        /* cycle count */
++        aml_append(pkg, aml_int(100000));   /* measurement accuracy */
++        aml_append(pkg, aml_int(1000));     /* max sampling time */
++        aml_append(pkg, aml_int(1000));     /* min sampling time */
++        aml_append(pkg, aml_int(1000));     /* max averaging interval */
++        aml_append(pkg, aml_int(1000));     /* min averaging interval */
++    }
++    aml_append(pkg, aml_int(1000));     /* capacity granularity 1 */
++    aml_append(pkg, aml_int(1000));     /* capacity granularity 2 */
++    aml_append(pkg, aml_string("UTM Host Battery"));
++    aml_append(pkg, aml_string("0"));
++    aml_append(pkg, aml_string("LION"));
++    aml_append(pkg, aml_string("UTM"));
++    if (extended) {
++        aml_append(pkg, aml_int(1));    /* swapping capability */
++    }
++    aml_append(method, aml_return(pkg));
++    aml_append(dev, method);
++}
++
++void utm_battery_acpi_dsdt_add(Aml *scope, hwaddr base)
++{
++    Aml *dev, *field, *method;
++
++    dev = aml_device("BAT0");
++    aml_append(dev, aml_name_decl("_HID", aml_eisaid("PNP0C0A")));
++    aml_append(dev, aml_name_decl("_UID", aml_int(0)));
++
++    aml_append(dev, aml_operation_region("BREG", AML_SYSTEM_MEMORY,
++                                         aml_int(base), REG_LEN));
++    field = aml_field("BREG", AML_DWORD_ACC, AML_NOLOCK, AML_PRESERVE);
++    aml_append(field, aml_named_field("PWRA", 32));
++    aml_append(field, aml_named_field("BCHG", 32));
++    aml_append(field, aml_named_field("BPCT", 32));
++    aml_append(field, aml_named_field("BRAT", 32));
++    aml_append(dev, field);
++
++    method = aml_method("_STA", 0, AML_NOTSERIALIZED);
++    aml_append(method, aml_return(aml_int(0x1f)));
++    aml_append(dev, method);
++
++    add_info_method(dev, "_BIF", false);
++    add_info_method(dev, "_BIX", true);
++    add_status_method(dev);
++    aml_append(scope, dev);
++
++    dev = aml_device("ADP0");
++    aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0003")));
++    aml_append(dev, aml_name_decl("_UID", aml_int(0)));
++    method = aml_method("_PSR", 0, AML_NOTSERIALIZED);
++    aml_append(method, aml_return(aml_name("\\_SB.BAT0.PWRA")));
++    aml_append(dev, method);
++    method = aml_method("_STA", 0, AML_NOTSERIALIZED);
++    aml_append(method, aml_return(aml_int(0x0f)));
++    aml_append(dev, method);
++    aml_append(scope, dev);
++}
+diff --git a/hw/arm/virt-acpi-build.c b/hw/arm/virt-acpi-build.c
+index f9fececa8d..a1b4077088 100644
+--- a/hw/arm/virt-acpi-build.c
++++ b/hw/arm/virt-acpi-build.c
+@@ -49,6 +49,7 @@
+ #include "hw/pci/pci_bus.h"
+ #include "hw/pci-host/gpex.h"
+ #include "hw/arm/virt.h"
++#include "hw/arm/utm-battery.h"
+ #include "hw/intc/arm_gicv3_its_common.h"
+ #include "hw/mem/nvdimm.h"
+ #include "hw/platform-bus.h"
+@@ -827,6 +828,9 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
+     }
+ 
+     acpi_dsdt_add_power_button(scope);
++    if (object_resolve_path_type("", TYPE_UTM_BATTERY, NULL)) {
++        utm_battery_acpi_dsdt_add(scope, UTM_BATTERY_MMIO_BASE);
++    }
+ #ifdef CONFIG_TPM
+     call_dev_aml_func(DEVICE(tpm_find()), scope);
+ #endif
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 3314fcc791..4115bbd3a0 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -689,7 +689,7 @@ static inline DeviceState *create_acpi_ged(VirtMachineState *vms)
+     DeviceState *dev;
+     MachineState *ms = MACHINE(vms);
+     int irq = vms->irqmap[VIRT_ACPI_GED];
+-    uint32_t event = ACPI_GED_PWR_DOWN_EVT;
++    uint32_t event = ACPI_GED_PWR_DOWN_EVT | ACPI_GED_BATTERY_EVT;
+ 
+     if (ms->ram_slots) {
+         event |= ACPI_GED_MEM_HOTPLUG_EVT;
+diff --git a/include/hw/acpi/acpi_dev_interface.h b/include/hw/acpi/acpi_dev_interface.h
+index 68d9d15f50..f3c563be8b 100644
+--- a/include/hw/acpi/acpi_dev_interface.h
++++ b/include/hw/acpi/acpi_dev_interface.h
+@@ -13,6 +13,7 @@ typedef enum {
+     ACPI_NVDIMM_HOTPLUG_STATUS = 16,
+     ACPI_VMGENID_CHANGE_STATUS = 32,
+     ACPI_POWER_DOWN_STATUS = 64,
++    ACPI_BATTERY_STATUS = 128,
+ } AcpiEventStatusBits;
+ 
+ #define TYPE_ACPI_DEVICE_IF "acpi-device-interface"
+diff --git a/include/hw/acpi/generic_event_device.h b/include/hw/acpi/generic_event_device.h
+index d2dac87b4a..138a647cb9 100644
+--- a/include/hw/acpi/generic_event_device.h
++++ b/include/hw/acpi/generic_event_device.h
+@@ -101,6 +101,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(AcpiGedState, ACPI_GED)
+ #define ACPI_GED_PWR_DOWN_EVT      0x2
+ #define ACPI_GED_NVDIMM_HOTPLUG_EVT 0x4
+ #define ACPI_GED_CPU_HOTPLUG_EVT    0x8
++#define ACPI_GED_BATTERY_EVT        0x10
+ 
+ typedef struct GEDState {
+     MemoryRegion evt;
+diff --git a/include/hw/arm/utm-battery.h b/include/hw/arm/utm-battery.h
+new file mode 100644
+index 0000000000..a97312eee9
+--- /dev/null
++++ b/include/hw/arm/utm-battery.h
+@@ -0,0 +1,18 @@
++/*
++ * Host battery and AC adapter exposed to the guest as ACPI devices.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef HW_ARM_UTM_BATTERY_H
++#define HW_ARM_UTM_BATTERY_H
++
++#include "exec/hwaddr.h"
++#include "hw/acpi/aml-build.h"
++
++#define TYPE_UTM_BATTERY "utm-battery"
++#define UTM_BATTERY_MMIO_BASE 0x090c0000
++
++void utm_battery_acpi_dsdt_add(Aml *scope, hwaddr base);
++
++#endif
+-- 
+2.54.0 (Apple Git-157)
+
+
+From 59d5961d4da10cbc2b0c0811066c0e47770bcb04 Mon Sep 17 00:00:00 2001
+From: "Vinicius H. Pereira" <vinicius@Viniciuss-MacBook-Pro.local>
+Date: Mon, 26 Oct 2026 23:05:05 -0300
+Subject: [PATCH 2/2] hw/arm/utm-battery: notify again after the guest's _BST
+ cache window
+
+Linux evaluates _BST at most once per cache_time (1000 ms) and a Notify
+does not bypass that cache, so a host change that lands within a second
+of a guest read stayed hidden until the next read. Send the battery
+event when a property changes and once more 1100 ms later on the virtual
+clock, so the guest re-reads after the window.
+
+Tested (standalone QEMU and the sysroot QEMU in a dev UTM, Ubuntu 26.04
+ARM64 guest, 3 minutes of plug/unplug against a host sampler): the AC
+state follows macOS within 0.33 s and the battery state within about
+1.06 s. udevadm monitor -k shows a second BAT0/ADP0 uevent pair about
+1.1 s after each change.
+Not tested: Windows, which does not cache _BST like this; checkpatch.pl
+on this diff reports 0 errors and 0 warnings.
+
+Assisted-by: Claude:claude-sonnet-5-5
+---
+ hw/arm/utm-battery.c | 42 +++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 37 insertions(+), 5 deletions(-)
+
+diff --git a/hw/arm/utm-battery.c b/hw/arm/utm-battery.c
+index a9c8b5cd14..1e76b9903c 100644
+--- a/hw/arm/utm-battery.c
++++ b/hw/arm/utm-battery.c
+@@ -11,6 +11,7 @@
+ #include "qapi/error.h"
+ #include "qapi/visitor.h"
+ #include "qemu/module.h"
++#include "qemu/timer.h"
+ #include "exec/address-spaces.h"
+ #include "exec/memory.h"
+ #include "hw/acpi/acpi_dev_interface.h"
+@@ -31,6 +32,12 @@
+ #define DESIGN_VOLTAGE_MV   12000
+ /* Rate reported when the host gives no time estimate. */
+ #define DEFAULT_RATE_MW     5000
++/*
++ * Linux caches _BST for one second (cache_time) and a notification does not
++ * bypass it, so a change within that window of a guest read goes unseen.
++ * Notify again once the window has passed.
++ */
++#define RENOTIFY_DELAY_MS   1100
+ 
+ OBJECT_DECLARE_SIMPLE_TYPE(UtmBatteryState, UTM_BATTERY)
+ 
+@@ -38,6 +45,7 @@ struct UtmBatteryState {
+     DeviceState parent_obj;
+ 
+     MemoryRegion iomem;
++    QEMUTimer *renotify;
+     bool ac_online;
+     bool charging;
+     uint32_t percent;
+@@ -96,7 +104,7 @@ static const MemoryRegionOps utm_battery_ops = {
+     },
+ };
+ 
+-static void utm_battery_notify(void)
++static void utm_battery_send_event(void)
+ {
+     Object *ged = object_resolve_path_type("", TYPE_ACPI_DEVICE_IF, NULL);
+ 
+@@ -105,6 +113,20 @@ static void utm_battery_notify(void)
+     }
+ }
+ 
++static void utm_battery_renotify(void *opaque)
++{
++    utm_battery_send_event();
++}
++
++static void utm_battery_notify(UtmBatteryState *s)
++{
++    utm_battery_send_event();
++    if (s->renotify) {
++        timer_mod(s->renotify,
++                  qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + RENOTIFY_DELAY_MS);
++    }
++}
++
+ static bool get_ac_online(Object *obj, Error **errp)
+ {
+     return UTM_BATTERY(obj)->ac_online;
+@@ -116,7 +138,7 @@ static void set_ac_online(Object *obj, bool value, Error **errp)
+ 
+     if (s->ac_online != value) {
+         s->ac_online = value;
+-        utm_battery_notify();
++        utm_battery_notify(s);
+     }
+ }
+ 
+@@ -131,7 +153,7 @@ static void set_charging(Object *obj, bool value, Error **errp)
+ 
+     if (s->charging != value) {
+         s->charging = value;
+-        utm_battery_notify();
++        utm_battery_notify(s);
+     }
+ }
+ 
+@@ -158,7 +180,7 @@ static void set_percent(Object *obj, Visitor *v, const char *name,
+     }
+     if (s->percent != value) {
+         s->percent = value;
+-        utm_battery_notify();
++        utm_battery_notify(s);
+     }
+ }
+ 
+@@ -181,7 +203,7 @@ static void set_minutes_remaining(Object *obj, Visitor *v, const char *name,
+     }
+     if (s->minutes_remaining != value) {
+         s->minutes_remaining = value;
+-        utm_battery_notify();
++        utm_battery_notify(s);
+     }
+ }
+ 
+@@ -208,6 +230,15 @@ static void utm_battery_realize(DeviceState *dev, Error **errp)
+                           TYPE_UTM_BATTERY, REG_LEN);
+     memory_region_add_subregion(get_system_memory(), UTM_BATTERY_MMIO_BASE,
+                                 &s->iomem);
++    s->renotify = timer_new_ms(QEMU_CLOCK_VIRTUAL, utm_battery_renotify, s);
++}
++
++static void utm_battery_unrealize(DeviceState *dev)
++{
++    UtmBatteryState *s = UTM_BATTERY(dev);
++
++    timer_free(s->renotify);
++    s->renotify = NULL;
+ }
+ 
+ static const VMStateDescription vmstate_utm_battery = {
+@@ -228,6 +259,7 @@ static void utm_battery_class_init(ObjectClass *klass, void *data)
+     DeviceClass *dc = DEVICE_CLASS(klass);
+ 
+     dc->realize = utm_battery_realize;
++    dc->unrealize = utm_battery_unrealize;
+     dc->vmsd = &vmstate_utm_battery;
+     dc->user_creatable = true;
+     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
+-- 
+2.54.0 (Apple Git-157)
+
