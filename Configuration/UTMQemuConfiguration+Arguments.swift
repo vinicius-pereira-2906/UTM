@@ -507,6 +507,15 @@ import Virtualization // for getting network interfaces
         system.architecture.hasHypervisorSupport && qemu.hasHypervisor
     }
     
+    /// The battery device needs the `virt` machine's ACPI tables and a Mac that has a battery.
+    var isHostBatteryUsed: Bool {
+        #if os(macOS)
+        qemu.hasHostBattery && system.architecture == .aarch64 && system.target.rawValue.hasPrefix("virt") && UTMHostBatteryState.current != nil
+        #else
+        false
+        #endif
+    }
+    
     private var isTSOUsed: Bool {
         system.architecture.hasTSOSupport && qemu.hasTSO
     }
@@ -1265,6 +1274,10 @@ import Virtualization // for getting network interfaces
         }
         if qemu.hasTPMDevice {
             tpmArguments
+        }
+        if isHostBatteryUsed {
+            f("-device")
+            f("utm-battery,id=utm-battery")
         }
     }
     

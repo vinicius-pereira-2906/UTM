@@ -103,8 +103,11 @@
 		841E997A28AA119B003C6CB6 /* UTMRegistryEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 841E997828AA119B003C6CB6 /* UTMRegistryEntry.swift */; };
 		841E997B28AA119B003C6CB6 /* UTMRegistryEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 841E997828AA119B003C6CB6 /* UTMRegistryEntry.swift */; };
 		841E999828AC817D003C6CB6 /* UTMQemuVirtualMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 841E999728AC817D003C6CB6 /* UTMQemuVirtualMachine.swift */; };
+		A7B4C5D60E1F4A8B9C2D3E02 /* UTMHostBattery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B4C5D60E1F4A8B9C2D3E01 /* UTMHostBattery.swift */; };
 		841E999928AC817D003C6CB6 /* UTMQemuVirtualMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 841E999728AC817D003C6CB6 /* UTMQemuVirtualMachine.swift */; };
+		A7B4C5D60E1F4A8B9C2D3E03 /* UTMHostBattery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B4C5D60E1F4A8B9C2D3E01 /* UTMHostBattery.swift */; };
 		841E999A28AC817D003C6CB6 /* UTMQemuVirtualMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 841E999728AC817D003C6CB6 /* UTMQemuVirtualMachine.swift */; };
+		A7B4C5D60E1F4A8B9C2D3E04 /* UTMHostBattery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B4C5D60E1F4A8B9C2D3E01 /* UTMHostBattery.swift */; };
 		84258C42288F806400C66366 /* VMToolbarUSBMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84258C41288F806400C66366 /* VMToolbarUSBMenuView.swift */; };
 		842B9F8D28CC58B700031EE7 /* UTMPatches.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842B9F8C28CC58B700031EE7 /* UTMPatches.swift */; };
 		842B9F8E28CC58B700031EE7 /* UTMPatches.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842B9F8C28CC58B700031EE7 /* UTMPatches.swift */; };
@@ -1840,6 +1843,7 @@
 		841E997428AA1191003C6CB6 /* UTMRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTMRegistry.swift; sourceTree = "<group>"; };
 		841E997828AA119B003C6CB6 /* UTMRegistryEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTMRegistryEntry.swift; sourceTree = "<group>"; };
 		841E999728AC817D003C6CB6 /* UTMQemuVirtualMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTMQemuVirtualMachine.swift; sourceTree = "<group>"; };
+		A7B4C5D60E1F4A8B9C2D3E01 /* UTMHostBattery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTMHostBattery.swift; sourceTree = "<group>"; };
 		84258C41288F806400C66366 /* VMToolbarUSBMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VMToolbarUSBMenuView.swift; sourceTree = "<group>"; };
 		842B9F8C28CC58B700031EE7 /* UTMPatches.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UTMPatches.swift; sourceTree = "<group>"; };
 		8432328F28C2CDAD00CFBC97 /* VMNavigationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VMNavigationListView.swift; sourceTree = "<group>"; };
@@ -3127,6 +3131,7 @@
 				CE928C2926ABE6690099F293 /* UTMAppleVirtualMachine.swift */,
 				4F9F544E438D4BE8A5CA9360 /* UTMAppleVmnetNetworkManager.swift */,
 				841E999728AC817D003C6CB6 /* UTMQemuVirtualMachine.swift */,
+				A7B4C5D60E1F4A8B9C2D3E01 /* UTMHostBattery.swift */,
 				CEF01DB12B6724A300725A0F /* UTMSpiceVirtualMachine.swift */,
 			);
 			path = Services;
@@ -4160,6 +4165,7 @@
 				CE2D930424AD46670059923A /* UTMLegacyQemuConfiguration.m in Sources */,
 				CE231D422BDDF280006D6DC3 /* UTMDonateView.swift in Sources */,
 				841E999828AC817D003C6CB6 /* UTMQemuVirtualMachine.swift in Sources */,
+				A7B4C5D60E1F4A8B9C2D3E02 /* UTMHostBattery.swift in Sources */,
 				CE2D957924AD4F990059923A /* VMDetailsView.swift in Sources */,
 				CE2D930524AD46670059923A /* VMDisplayMetalViewController.m in Sources */,
 				848D99C428670F650055C215 /* UTMQemuConfiguration+Arguments.swift in Sources */,
@@ -4329,6 +4335,7 @@
 				CEB20EEA282053320033EFB5 /* DoubleClickHandler.swift in Sources */,
 				CE2D956C24AD4F990059923A /* VMCardView.swift in Sources */,
 				841E999A28AC817D003C6CB6 /* UTMQemuVirtualMachine.swift in Sources */,
+				A7B4C5D60E1F4A8B9C2D3E04 /* UTMHostBattery.swift in Sources */,
 				843BF82628441EAD0029D60D /* UTMQemuConfigurationDisplay.swift in Sources */,
 				CE2D955C24AD4F980059923A /* VMConfigQEMUView.swift in Sources */,
 				CEF0305026A2AFBF00667B63 /* BigButtonStyle.swift in Sources */,
@@ -4552,6 +4559,7 @@
 				843BF83528450C0B0029D60D /* UTMQemuConfigurationSound.swift in Sources */,
 				CEA45ECF263519B5002FA97D /* VMConfigPortForwardForm.swift in Sources */,
 				841E999928AC817D003C6CB6 /* UTMQemuVirtualMachine.swift in Sources */,
+				A7B4C5D60E1F4A8B9C2D3E03 /* UTMHostBattery.swift in Sources */,
 				84CF5DD4288DCE6400D01721 /* VMDisplayHostedView.swift in Sources */,
 				CEBE820826A4C74E007AAB12 /* VMWizardSharingView.swift in Sources */,
 				84C60FB82681A41B00B58C00 /* VMToolbarView.swift in Sources */,

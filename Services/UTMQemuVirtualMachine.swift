@@ -108,6 +108,20 @@ final class UTMQemuVirtualMachine: UTMSpiceVirtualMachine {
     
     private weak var screenshotTimer: Timer?
     
+    #if os(macOS)
+    /// Mirrors the host battery into the guest while the VM runs.
+    @MainActor var hostBatteryObserver: UTMHostBatteryObserver?
+    
+    /// The last battery state sent to the guest.
+    @MainActor var hostBatteryPushed: UTMHostBatteryState?
+    
+    /// True while a push is sending properties, so pushes never interleave.
+    @MainActor var isPushingHostBattery: Bool = false
+    
+    /// Set when the host changed again during a push.
+    @MainActor var needsHostBatteryPush: Bool = false
+    #endif
+    
     /// Handle SPICE IO related events
     weak var ioServiceDelegate: UTMSpiceIODelegate? {
         didSet {
@@ -517,6 +531,9 @@ extension UTMQemuVirtualMachine {
             }
             try await startTask!.value
             state = .started
+            #if os(macOS)
+            await startHostBatterySync()
+            #endif
             if screenshotTimer == nil && !options.contains(.remoteSession) {
                 screenshotTimer = startScreenshotTimer()
             }
@@ -808,6 +825,11 @@ extension UTMQemuVirtualMachine: QEMUVirtualMachineDelegate {
         ioServiceDelegate = nil
         pipeInterface?.disconnect()
         pipeInterface = nil
+        #if os(macOS)
+        Task { @MainActor in
+            stopHostBatterySync()
+        }
+        #endif
         snapshotUnsupportedError = nil
         try? saveScreenshot()
         state = .stopped

@@ -43,6 +43,9 @@ struct UTMQemuConfigurationQEMU: Codable {
     /// If true, create a vTPM device with an emulated backend.
     var hasTPMDevice: Bool = false
     
+    /// If true, show the host's battery in the guest on supported targets.
+    var hasHostBattery: Bool = false
+    
     /// If true, use HVF hypervisor instead of TCG emulation.
     var hasHypervisor: Bool = false
     
@@ -85,6 +88,7 @@ struct UTMQemuConfigurationQEMU: Codable {
         case hasRNGDevice = "RNGDevice"
         case hasBalloonDevice = "BalloonDevice"
         case hasTPMDevice = "TPMDevice"
+        case hasHostBattery = "HostBattery"
         case hasHypervisor = "Hypervisor"
         case hasTSO = "TSO"
         case hasRTCLocalTime = "RTCLocalTime"
@@ -103,6 +107,7 @@ struct UTMQemuConfigurationQEMU: Codable {
         hasRNGDevice = try values.decode(Bool.self, forKey: .hasRNGDevice)
         hasBalloonDevice = try values.decode(Bool.self, forKey: .hasBalloonDevice)
         hasTPMDevice = try values.decode(Bool.self, forKey: .hasTPMDevice)
+        hasHostBattery = try values.decodeIfPresent(Bool.self, forKey: .hasHostBattery) ?? false
         hasHypervisor = try values.decode(Bool.self, forKey: .hasHypervisor)
         hasTSO = try values.decodeIfPresent(Bool.self, forKey: .hasTSO) ?? false
         hasRTCLocalTime = try values.decode(Bool.self, forKey: .hasRTCLocalTime)
@@ -123,6 +128,7 @@ struct UTMQemuConfigurationQEMU: Codable {
         try container.encode(hasRNGDevice, forKey: .hasRNGDevice)
         try container.encode(hasBalloonDevice, forKey: .hasBalloonDevice)
         try container.encode(hasTPMDevice, forKey: .hasTPMDevice)
+        try container.encode(hasHostBattery, forKey: .hasHostBattery)
         try container.encode(hasHypervisor, forKey: .hasHypervisor)
         try container.encode(hasTSO, forKey: .hasTSO)
         try container.encode(hasRTCLocalTime, forKey: .hasRTCLocalTime)

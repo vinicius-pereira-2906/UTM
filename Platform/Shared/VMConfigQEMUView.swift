@@ -34,6 +34,14 @@ struct VMConfigQEMUView: View {
         UTMQemuConfigurationQEMU.uefiImagePrefix(forArchitecture: config.system.architecture) != nil
     }
     
+    private var supportsHostBattery: Bool {
+        #if os(macOS)
+        config.system.architecture == .aarch64 && config.system.target.rawValue.hasPrefix("virt") && UTMHostBatteryState.current != nil
+        #else
+        false
+        #endif
+    }
+    
     private var supportsPs2: Bool {
         if config.system.target.rawValue.starts(with: "pc") || config.system.target.rawValue.starts(with: "q35") {
             return true
@@ -72,6 +80,9 @@ struct VMConfigQEMUView: View {
                                 config.qemu.hasPreloadedSecureBootKeys = false
                             }
                         }
+                    Toggle("Show Host Battery", isOn: $config.qemu.hasHostBattery)
+                        .disabled(!supportsHostBattery)
+                        .help("Show the battery level and charging state of this Mac in the guest. Only available for ARM64 virt machines on a Mac with a battery. Sleep and shutdown on low battery are still handled by macOS.")
                     Toggle("Use Hypervisor", isOn: $config.qemu.hasHypervisor)
                         .help("Only available if host architecture matches the target. Otherwise, TCG emulation is used.")
                         .disabled(!config.system.architecture.hasHypervisorSupport)
