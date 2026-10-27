@@ -5860,3 +5860,54 @@ index a9c8b5cd14..1e76b9903c 100644
 -- 
 2.54.0 (Apple Git-157)
 
+From c6986efbf050d46bf3f79929d3f8611326000ecb Mon Sep 17 00:00:00 2001
+From: "Vinicius H. Pereira" <vinicius@Viniciuss-MacBook-Pro.local>
+Date: Mon, 26 Oct 2026 23:49:57 -0300
+Subject: [PATCH] hw/arm/utm-battery: report an unknown rate when the host has
+ no estimate
+
+When macOS has no time estimate (it shows "no estimate" for the first
+minute after a plug-in) the device reported a fixed 5000 mW rate, so the
+guest computed a time to full or empty that the Mac did not have. Report
+the ACPI "unknown" rate, 0xffffffff, instead, so Windows and Linux show
+no estimate.
+
+Tested: built into the sysroot QEMU and a dev UTM (** ARCHIVE SUCCEEDED
+**); checkpatch.pl reports 0 errors and 0 warnings. With a real macOS
+estimate the guest values are unchanged: in a Windows 11 guest
+ChargeRate 7680 and then 8777 with RemainingCapacity 101376 of 102400
+gave 8.0 and 7.0 minutes, matching the Mac's 8 and 7.
+Not tested: either guest with no estimate, which is the case this changes.
+
+Assisted-by: Claude:claude-sonnet-5-5
+---
+ hw/arm/utm-battery.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/hw/arm/utm-battery.c b/hw/arm/utm-battery.c
+index 1e76b9903c..fbbeb4e092 100644
+--- a/hw/arm/utm-battery.c
++++ b/hw/arm/utm-battery.c
+@@ -30,8 +30,8 @@
+ /* One percent is 1024 mWh so the AML can scale with a shift. */
+ #define DESIGN_CAPACITY_MWH 102400
+ #define DESIGN_VOLTAGE_MV   12000
+-/* Rate reported when the host gives no time estimate. */
+-#define DEFAULT_RATE_MW     5000
++/* ACPI value for a rate the guest should treat as unknown. */
++#define RATE_UNKNOWN        0xffffffff
+ /*
+  * Linux caches _BST for one second (cache_time) and a notification does not
+  * bypass it, so a change within that window of a guest read goes unseen.
+@@ -61,7 +61,7 @@ static uint32_t utm_battery_rate(UtmBatteryState *s)
+     uint64_t energy_mwh;
+ 
+     if (!s->minutes_remaining) {
+-        return DEFAULT_RATE_MW;
++        return RATE_UNKNOWN;
+     }
+     if (s->charging) {
+         energy_mwh = (100 - s->percent) * (DESIGN_CAPACITY_MWH / 100);
+-- 
+2.54.0 (Apple Git-157)
+
