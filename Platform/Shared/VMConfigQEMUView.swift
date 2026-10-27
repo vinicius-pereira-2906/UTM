@@ -35,11 +35,7 @@ struct VMConfigQEMUView: View {
     }
     
     private var supportsHostBattery: Bool {
-        #if os(macOS)
-        config.system.architecture == .aarch64 && config.system.target.rawValue.hasPrefix("virt") && UTMHostBatteryState.current != nil
-        #else
-        false
-        #endif
+        UTMQemuConfigurationQEMU.supportsHostBattery(forArchitecture: config.system.architecture, target: config.system.target)
     }
     
     private var supportsPs2: Bool {
@@ -80,9 +76,9 @@ struct VMConfigQEMUView: View {
                                 config.qemu.hasPreloadedSecureBootKeys = false
                             }
                         }
-                    Toggle("Show Host Battery", isOn: $config.qemu.hasHostBattery)
+                    Toggle("Show Host Battery", isOn: supportsHostBattery ? $config.qemu.hasHostBattery : .constant(false))
                         .disabled(!supportsHostBattery)
-                        .help("Show the battery level and charging state of this Mac in the guest. Only available for ARM64 virt machines on a Mac with a battery. Sleep and shutdown on low battery are still handled by macOS.")
+                        .help("Show the battery level and charging state of this Mac in the virtual machine. Only available on a Mac with a battery and for ARM virtual machines that use the virt system. It is on by default for new virtual machines. macOS still handles sleep and shutdown when the battery is low.")
                     Toggle("Use Hypervisor", isOn: $config.qemu.hasHypervisor)
                         .help("Only available if host architecture matches the target. Otherwise, TCG emulation is used.")
                         .disabled(!config.system.architecture.hasHypervisorSupport)

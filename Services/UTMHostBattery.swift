@@ -93,6 +93,12 @@ extension UTMQemuVirtualMachine {
         needsHostBatteryPush = false
     }
     
+    /// The guest keeps the battery it was paused or saved with, so send the whole state again.
+    @MainActor func resendHostBattery() async {
+        hostBatteryPushed = nil
+        await pushHostBattery()
+    }
+    
     /// Runs one push at a time: a change during a push makes it run again with the latest state.
     @MainActor private func pushHostBattery() async {
         guard !isPushingHostBattery else {

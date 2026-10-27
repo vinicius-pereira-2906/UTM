@@ -756,6 +756,9 @@ extension UTMQemuVirtualMachine {
         do {
             try await _resume()
             state = .started
+            #if os(macOS)
+            await resendHostBattery()
+            #endif
         } catch {
             state = .stopped
             throw error
@@ -781,6 +784,9 @@ extension UTMQemuVirtualMachine {
         do {
             try await _restoreSnapshot(name: name ?? suspendSnapshotName)
             state = prev
+            #if os(macOS)
+            await resendHostBattery()
+            #endif
         } catch {
             if prev == .started, let monitor = await monitor {
                 do {

@@ -164,6 +164,16 @@ extension UTMQemuConfigurationQEMU {
             hasRNGDevice = true
         }
         hasHypervisor = architecture.hasHypervisorSupport
+        hasHostBattery = Self.supportsHostBattery(forArchitecture: architecture, target: target)
+    }
+    
+    /// The battery device needs the `virt` machine's ACPI tables and a Mac that has a battery.
+    static func supportsHostBattery(forArchitecture architecture: QEMUArchitecture, target: any QEMUTarget) -> Bool {
+        #if os(macOS)
+        architecture == .aarch64 && target.rawValue.hasPrefix("virt") && UTMHostBatteryState.current != nil
+        #else
+        false
+        #endif
     }
 }
 
